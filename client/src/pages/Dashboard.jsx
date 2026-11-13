@@ -3,9 +3,11 @@ import { api } from '../api';
 import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import BarChart from '../components/BarChart';
-import SaleTable from '../components/SaleTable';
+import OrderTable from '../components/OrderTable';
+import ProfitSummary from '../components/ProfitSummary';
 import EmptyState, { ErrorBanner, LoadingRows } from '../components/Feedback';
 import {
+  AlertIcon,
   ReceiptIcon,
   RefreshIcon,
   RupeeIcon,
@@ -14,16 +16,26 @@ import {
 } from '../components/Icons';
 import {
   clockLabel,
+  dateLabel,
   kg,
   money,
   moneyWhole,
   monthLabel,
   percentChange,
+  shortDateLabel,
   todayKey,
   weekdayLabel,
-  shortDateLabel,
-  dateLabel,
 } from '../format';
+
+function profitText(report) {
+  if (!report || report.profitComplete === false) return 'Incomplete';
+  return money(report.estimatedNetProfit);
+}
+
+function expenseText(report) {
+  if (!report) return money(0);
+  return money(report.recordedExpenses ?? 0);
+}
 
 export default function Dashboard({ onNavigate }) {
   const [data, setData] = useState(null);
@@ -55,28 +67,46 @@ export default function Dashboard({ onNavigate }) {
     return () => window.removeEventListener('focus', onFocus);
   }, [load]);
 
-  const todaySales = data?.today ?? { total: 0, orders: 0, kg: 0, average: 0 };
-  const yesterdaySales = data?.yesterday ?? { total: 0, orders: 0, kg: 0, average: 0 };
-  const month = data?.month ?? { total: 0, orders: 0, kg: 0, average: 0 };
+  const today = data?.today ?? {
+    revenue: 0,
+    orders: 0,
+    kg: 0,
+    sadiKg: 0,
+    beefKg: 0,
+    legacyKg: 0,
+    otherRevenue: 0,
+    recordedExpenses: 0,
+    estimatedNetProfit: 0,
+    profitComplete: true,
+    average: 0,
+  };
+  const yesterday = data?.yesterday ?? { revenue: 0 };
+  const month = data?.month ?? {
+    revenue: 0,
+    orders: 0,
+    kg: 0,
+    sadiKg: 0,
+    beefKg: 0,
+    legacyKg: 0,
+    otherRevenue: 0,
+    recordedExpenses: 0,
+    estimatedNetProfit: 0,
+    profitComplete: true,
+  };
   const weekly = data?.last7Days ?? [];
-  const recent = data?.recent ?? [];
-  const trend = percentChange(todaySales.total, yesterdaySales.total);
+  const recent = data?.recentOrders ?? [];
+  const trend = percentChange(today.revenue, yesterday.revenue);
   const weekTotal = weekly.reduce((sum, day) => sum + day.total, 0);
-  const bestDay = weekly.reduce(
-    (best, day) => (day.total > best.total ? day : best),
-    { date: '', total: 0 }
-  );
+  const warnings = data?.backup?.backupWarnings ?? [];
 
   return (
     <div className="page">
       <PageHeader
         title="Owner Dashboard"
-        subtitle={`Live figures from this laptop · ${dateLabel(todayKey())}`}
+        subtitle={`Live figures from this laptop · ${dateLabel(todayKey())} · Asia/Karachi`}
         actions={
           <div className="header-actions">
-            {updatedAt ? (
-              <span className="updated-at">Updated {clockLabel(updatedAt)}</span>
-            ) : null}
+            {updatedAt ? <span className="updated-at">Updated {clockLabel(updatedAt)}</span> : null}
             <button
               type="button"
               className="btn btn-ghost"
@@ -91,31 +121,48 @@ export default function Dashboard({ onNavigate }) {
 
       <ErrorBanner message={error} onRetry={() => load()} />
 
+      {warnings.length ? (
+        <div className="callout callout-warning" role="status">
+          <strong>Backup attention</strong>
+          <ul className="callout-list">
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="stat-grid">
         <StatCard
           tone="primary"
-          label="Today's Total Sales"
-          value={money(todaySales.total)}
+          label="Today's Sales"
+          value={money(today.revenue)}
           hint="vs yesterday"
           trend={trend}
           icon={<RupeeIcon size={20} />}
         />
         <StatCard
           label="Today's Orders"
-          value={todaySales.orders}
-          hint="sales recorded today"
+          value={today.orders}
+          hint="orders recorded today"
           icon={<ReceiptIcon size={20} />}
         />
         <StatCard
           label="Biryani Sold Today"
-          value={kg(todaySales.kg)}
-          hint="1 Pao = 250 g"
+          value={kg(today.kg)}
+          hint={`Sadi ${kg(today.sadiKg)} · Beef ${kg(today.beefKg)}${
+            today.legacyKg ? ` · Legacy ${kg(today.legacyKg)}` : ''
+          }`}
           icon={<ScaleIcon size={20} />}
         />
         <StatCard
-          label="Average Order"
-          value={moneyWhole(todaySales.average)}
-          hint="today's average"
+          label="Estimated Net Profit"
+          value={profitText(today)}
+          hint={
+            today.profitComplete === false
+              ? 'Profit calculation incomplete'
+              : `after ${money(today.recordedExpenses ?? 0)} expenses`
+          }
           icon={<TrendUpIcon size={20} />}
         />
       </div>
@@ -158,37 +205,94 @@ export default function Dashboard({ onNavigate }) {
 
           <div className="month-row month-row-highlight">
             <span>Total sales</span>
-            <strong>{money(month.total)}</strong>
+            <strong>{money(month.revenue)}</strong>
           </div>
           <div className="month-row">
             <span>Orders</span>
             <strong>{month.orders}</strong>
           </div>
           <div className="month-row">
-            <span>Biryani sold</span>
-            <strong>{kg(month.kg)}</strong>
+            <span>Sadi / Beef biryani</span>
+            <strong>
+              {kg(month.sadiKg)} / {kg(month.beefKg)}
+            </strong>
+          </div>
+          {month.legacyKg ? (
+            <div className="month-row">
+              <span>Legacy biryani</span>
+              <strong>{kg(month.legacyKg)}</strong>
+            </div>
+          ) : null}
+          <div className="month-row">
+            <span>Other items revenue</span>
+            <strong>{money(month.otherRevenue)}</strong>
           </div>
           <div className="month-row">
-            <span>Average order</span>
-            <strong>{moneyWhole(month.average)}</strong>
+            <span>Recorded expenses</span>
+            <strong>{expenseText(month)}</strong>
           </div>
 
           <div className="month-divider" />
 
           <div className="month-row">
-            <span>Yesterday</span>
-            <strong>{money(yesterdaySales.total)}</strong>
+            <span>Estimated gross profit</span>
+            <strong>
+              {month.profitComplete === false ? 'Incomplete' : money(month.estimatedGrossProfit)}
+            </strong>
           </div>
-          <p className="month-footnote">
-            {yesterdaySales.orders} orders · {kg(yesterdaySales.kg)} sold yesterday
-          </p>
+          <div className="month-row month-row-highlight">
+            <span>Estimated net profit</span>
+            <strong>{profitText(month)}</strong>
+          </div>
 
-          {bestDay.date ? (
-            <div className="best-day">
-              <span className="best-day-label">Best of last 7 days</span>
-              <span className="best-day-value">
-                {money(bestDay.total)} · {shortDateLabel(bestDay.date)}
-              </span>
+          <p className="month-footnote">
+            Yesterday: {money(yesterday.revenue)} · {yesterday.orders} orders · {kg(yesterday.kg)}
+          </p>
+        </section>
+      </div>
+
+      <div className="dashboard-grid">
+        <ProfitSummary report={today} title="Today's profit" compact />
+        <section className="card">
+          <div className="card-heading">
+            <div>
+              <h2 className="card-title">Today at a glance</h2>
+              <p className="card-subtitle">Biryani weights and other revenue.</p>
+            </div>
+            <span className="card-chip">
+              <AlertIcon size={15} /> Honest figures
+            </span>
+          </div>
+          <div className="mini-grid">
+            <div className="mini-stat">
+              <span>Sadi biryani</span>
+              <strong>{kg(today.sadiKg)}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Beef biryani</span>
+              <strong>{kg(today.beefKg)}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Legacy biryani</span>
+              <strong>{today.legacyKg ? kg(today.legacyKg) : 'None'}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Other items</span>
+              <strong>{money(today.otherRevenue)}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Recorded expenses</span>
+              <strong>{money(today.recordedExpenses ?? 0)}</strong>
+            </div>
+            <div className="mini-stat">
+              <span>Average order</span>
+              <strong>{moneyWhole(today.average)}</strong>
+            </div>
+          </div>
+          {today.profitComplete === false ? (
+            <div className="profit-warning profit-warning-inline">
+              <strong>Profit Calculation Incomplete</strong>
+              <p>One or more today&apos;s items have no cost recorded in Owner Settings.</p>
             </div>
           ) : null}
         </section>
@@ -197,25 +301,21 @@ export default function Dashboard({ onNavigate }) {
       <section className="card recent-card">
         <div className="card-heading">
           <div>
-            <h2 className="card-title">Recent sales</h2>
-            <p className="card-subtitle">The last 10 sales saved on this laptop.</p>
+            <h2 className="card-title">Recent orders</h2>
+            <p className="card-subtitle">The last 10 orders saved on this laptop.</p>
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost btn-small"
-            onClick={() => onNavigate('history')}
-          >
-            View all sales
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => onNavigate('history')}>
+            View all orders
           </button>
         </div>
 
         {loading && !data ? (
           <LoadingRows rows={5} />
         ) : recent.length ? (
-          <SaleTable sales={recent} showDate />
+          <OrderTable orders={recent} showDate />
         ) : (
           <EmptyState
-            title="No sales recorded yet"
+            title="No orders recorded yet"
             message="Open New Sale to record the first order of the day."
           />
         )}

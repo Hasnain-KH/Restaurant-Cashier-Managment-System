@@ -3,7 +3,8 @@ import { api } from '../api';
 import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import BarChart from '../components/BarChart';
-import SaleTable from '../components/SaleTable';
+import OrderTable from '../components/OrderTable';
+import ProfitSummary from '../components/ProfitSummary';
 import EmptyState, { ErrorBanner, LoadingRows } from '../components/Feedback';
 import { PrintIcon } from '../components/Icons';
 import {
@@ -31,6 +32,42 @@ function hourShort(hour) {
   return hour < 12 ? `${hour}a` : `${hour - 12}p`;
 }
 
+function netProfit(report) {
+  if (!report) return '—';
+  return report.profitComplete === false ? 'Incomplete' : money(report.estimatedNetProfit);
+}
+
+function TypeBreakdown({ report }) {
+  return (
+    <div className="mini-grid">
+      <div className="mini-stat">
+        <span>Sadi biryani</span>
+        <strong>{kg(report.sadiKg)}</strong>
+      </div>
+      <div className="mini-stat">
+        <span>Beef biryani</span>
+        <strong>{kg(report.beefKg)}</strong>
+      </div>
+      <div className="mini-stat">
+        <span>Legacy biryani</span>
+        <strong>{report.legacyKg ? kg(report.legacyKg) : 'None'}</strong>
+      </div>
+      <div className="mini-stat">
+        <span>Other items revenue</span>
+        <strong>{money(report.otherRevenue)}</strong>
+      </div>
+      <div className="mini-stat">
+        <span>Recorded expenses</span>
+        <strong>{money(report.recordedExpenses ?? report.expenses ?? 0)}</strong>
+      </div>
+      <div className="mini-stat">
+        <span>Estimated net profit</span>
+        <strong>{netProfit(report)}</strong>
+      </div>
+    </div>
+  );
+}
+
 export default function Reports() {
   const [tab, setTab] = useState('daily');
   const [date, setDate] = useState(todayKey());
@@ -43,8 +80,7 @@ export default function Reports() {
   const loadDaily = useCallback(async () => {
     setLoading(true);
     try {
-      const report = await api.dailyReport(date);
-      setDaily(report);
+      setDaily(await api.dailyReport(date));
       setError('');
     } catch (loadError) {
       setError(loadError.message);
@@ -56,8 +92,7 @@ export default function Reports() {
   const loadMonthly = useCallback(async () => {
     setLoading(true);
     try {
-      const report = await api.monthlyReport(month);
-      setMonthly(report);
+      setMonthly(await api.monthlyReport(month));
       setError('');
     } catch (loadError) {
       setError(loadError.message);
@@ -81,16 +116,16 @@ export default function Reports() {
       )
     : null;
 
-  const printReport = () => window.print();
-
   const reportTitle =
-    tab === 'daily' ? `Daily Sales Report · ${dateLabel(date)}` : `Monthly Sales Report · ${monthLabel(month)}`;
+    tab === 'daily'
+      ? `Daily Sales Report · ${dateLabel(date)}`
+      : `Monthly Sales Report · ${monthLabel(month)}`;
 
   return (
     <div className="page">
       <PageHeader
         title="Reports"
-        subtitle="Simple daily and monthly reports, calculated from saved sales."
+        subtitle="Daily and monthly reports with biryani types, expenses and honest profit."
         actions={
           <div className="header-actions">
             <div className="segmented" role="tablist" aria-label="Report type">
@@ -113,7 +148,7 @@ export default function Reports() {
                 Monthly
               </button>
             </div>
-            <button type="button" className="btn btn-ghost" onClick={printReport}>
+            <button type="button" className="btn btn-ghost" onClick={() => window.print()}>
               <PrintIcon size={17} /> Print
             </button>
           </div>
@@ -130,7 +165,9 @@ export default function Reports() {
           </div>
           <div className="print-meta">
             <strong>{reportTitle}</strong>
-            <span>Printed {clockLabel(new Date())} · {dateLabel(todayKey())}</span>
+            <span>
+              Printed {clockLabel(new Date())} · {dateLabel(todayKey())} · Asia/Karachi
+            </span>
           </div>
         </div>
 
@@ -160,21 +197,41 @@ export default function Reports() {
                   <StatCard
                     tone="primary"
                     label="Total Sales"
-                    value={money(daily.total)}
+                    value={money(daily.revenue)}
                     hint={`${daily.orders} orders`}
                   />
-                  <StatCard label="Orders" value={daily.orders} hint="sales on this date" />
-                  <StatCard label="Biryani Sold" value={kg(daily.kg)} hint="all weights combined" />
+                  <StatCard label="Orders" value={daily.orders} hint="orders on this date" />
+                  <StatCard label="Biryani Sold" value={kg(daily.kg)} hint="all biryani types" />
                   <StatCard
-                    label="Average Order"
-                    value={moneyWhole(daily.average)}
+                    label="Estimated Net Profit"
+                    value={netProfit(daily)}
                     hint={
-                      busiestHour && busiestHour.orders
-                        ? `Busiest: ${hourLabel(busiestHour.hour)}`
-                        : 'no orders yet'
+                      daily.profitComplete === false
+                        ? 'Profit calculation incomplete'
+                        : `after ${money(daily.recordedExpenses ?? 0)} expenses`
                     }
                   />
                 </div>
+
+                <section className="card">
+                  <div className="card-heading">
+                    <div>
+                      <h2 className="card-title">Sales by type</h2>
+                      <p className="card-subtitle">
+                        Legacy biryani is never counted as Sadi or Beef.
+                      </p>
+                    </div>
+                  </div>
+                  <TypeBreakdown report={daily} />
+                  <p className="table-footnote">
+                    Average order {moneyWhole(daily.average)}
+                    {busiestHour && busiestHour.orders
+                      ? ` · busiest hour ${hourLabel(busiestHour.hour)}`
+                      : ''}
+                  </p>
+                </section>
+
+                <ProfitSummary report={daily} title={`Profit for ${dateLabel(daily.date)}`} />
 
                 <section className="card chart-card">
                   <div className="card-heading">
@@ -200,16 +257,16 @@ export default function Reports() {
                 <section className="card table-card">
                   <div className="card-heading">
                     <div>
-                      <h2 className="card-title">Sales for {dateLabel(daily.date)}</h2>
+                      <h2 className="card-title">Orders for {dateLabel(daily.date)}</h2>
                       <p className="card-subtitle">Newest first.</p>
                     </div>
                   </div>
-                  {daily.sales.length ? (
-                    <SaleTable sales={daily.sales} />
+                  {daily.orderList.length ? (
+                    <OrderTable orders={daily.orderList} />
                   ) : (
                     <EmptyState
-                      title="No sales on this date"
-                      message="Choose another date or record a new sale."
+                      title="No orders on this date"
+                      message="Choose another date or record a new order."
                     />
                   )}
                 </section>
@@ -242,35 +299,52 @@ export default function Reports() {
                   <StatCard
                     tone="primary"
                     label="Monthly Total"
-                    value={money(monthly.total)}
+                    value={money(monthly.revenue)}
                     hint={`${monthly.orders} orders`}
                   />
-                  <StatCard
-                    label="Biryani Sold"
-                    value={kg(monthly.kg)}
-                    hint="in this month"
-                  />
+                  <StatCard label="Biryani Sold" value={kg(monthly.kg)} hint="in this month" />
                   <StatCard
                     label="Average per Day"
                     value={moneyWhole(monthly.averagePerDay)}
                     hint={`over ${monthly.daysShown} day${monthly.daysShown === 1 ? '' : 's'}`}
                   />
                   <StatCard
-                    label="Best Day"
-                    value={monthly.bestDay.date ? money(monthly.bestDay.total) : money(0)}
+                    label="Estimated Net Profit"
+                    value={netProfit(monthly)}
                     hint={
-                      monthly.bestDay.date ? dateLabel(monthly.bestDay.date) : 'no sales yet'
+                      monthly.profitComplete === false
+                        ? 'Profit calculation incomplete'
+                        : `after ${money(monthly.recordedExpenses ?? 0)} expenses`
                     }
                   />
                 </div>
+
+                <section className="card">
+                  <div className="card-heading">
+                    <div>
+                      <h2 className="card-title">Sales by type</h2>
+                      <p className="card-subtitle">
+                        Month total with each biryani type kept separate.
+                      </p>
+                    </div>
+                  </div>
+                  <TypeBreakdown report={monthly} />
+                  <p className="table-footnote">
+                    Best day {monthly.bestDay.date ? dateLabel(monthly.bestDay.date) : '—'} ·{' '}
+                    {money(monthly.bestDay.total)} · average order {moneyWhole(monthly.averageOrder)}
+                  </p>
+                </section>
+
+                <ProfitSummary
+                  report={monthly}
+                  title={`Profit for ${monthLabel(monthly.month)}`}
+                />
 
                 <section className="card chart-card">
                   <div className="card-heading">
                     <div>
                       <h2 className="card-title">Daily sales · {monthLabel(monthly.month)}</h2>
-                      <p className="card-subtitle">
-                        Hover any bar for the exact total. Average order {moneyWhole(monthly.averageOrder)}.
-                      </p>
+                      <p className="card-subtitle">Hover any bar for the exact total.</p>
                     </div>
                   </div>
                   <BarChart
@@ -297,12 +371,17 @@ export default function Reports() {
                     </div>
                   </div>
                   <div className="table-wrap">
-                    <table className="table">
+                    <table className="table report-table">
                       <thead>
                         <tr>
                           <th>Date</th>
                           <th className="align-right">Orders</th>
-                          <th className="align-right">Biryani (KG)</th>
+                          <th className="align-right">Sadi</th>
+                          <th className="align-right">Beef</th>
+                          <th className="align-right">Legacy</th>
+                          <th className="align-right">Other</th>
+                          <th className="align-right">Expenses</th>
+                          <th className="align-right">Net profit</th>
                           <th className="align-right">Sales</th>
                         </tr>
                       </thead>
@@ -311,16 +390,29 @@ export default function Reports() {
                           <tr key={day.date} className={day.orders ? '' : 'row-quiet'}>
                             <td>
                               <span className="day-cell">
-                                <span className="day-number mono">
-                                  {day.date.slice(8, 10)}
-                                </span>
+                                <span className="day-number mono">{day.date.slice(8, 10)}</span>
                                 <span className="day-meta">
                                   {weekdayLabel(day.date)}, {shortDateLabel(day.date)}
                                 </span>
                               </span>
                             </td>
-                            <td className="align-right">{day.orders}</td>
-                            <td className="align-right">{day.kg ? kg(day.kg) : '—'}</td>
+                            <td className="align-right">{day.orders || '—'}</td>
+                            <td className="align-right">{day.sadiKg ? kg(day.sadiKg) : '—'}</td>
+                            <td className="align-right">{day.beefKg ? kg(day.beefKg) : '—'}</td>
+                            <td className="align-right">{day.legacyKg ? kg(day.legacyKg) : '—'}</td>
+                            <td className="align-right">
+                              {day.otherRevenue ? money(day.otherRevenue) : '—'}
+                            </td>
+                            <td className="align-right">
+                              {day.expenses ? money(day.expenses) : '—'}
+                            </td>
+                            <td className="align-right">
+                              {day.profitComplete === false
+                                ? 'Incomplete'
+                                : day.orders
+                                ? money(day.estimatedNetProfit)
+                                : '—'}
+                            </td>
                             <td className="align-right amount-cell">
                               {day.total ? money(day.total) : '—'}
                             </td>
@@ -331,7 +423,12 @@ export default function Reports() {
                         <tr>
                           <td>Month total</td>
                           <td className="align-right">{monthly.orders}</td>
-                          <td className="align-right">{kg(monthly.kg)}</td>
+                          <td className="align-right">{kg(monthly.sadiKg)}</td>
+                          <td className="align-right">{kg(monthly.beefKg)}</td>
+                          <td className="align-right">{kg(monthly.legacyKg)}</td>
+                          <td className="align-right">{money(monthly.otherRevenue)}</td>
+                          <td className="align-right">{money(monthly.recordedExpenses)}</td>
+                          <td className="align-right">{netProfit(monthly)}</td>
                           <td className="align-right amount-cell">{money(monthly.total)}</td>
                         </tr>
                       </tfoot>

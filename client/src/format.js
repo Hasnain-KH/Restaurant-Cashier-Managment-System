@@ -1,3 +1,118 @@
+/**
+ * All business dates and times use the shop's clock (Asia/Karachi, PKT, UTC+5),
+ * even if the laptop is set to another timezone. The server stores the same zone.
+ */
+export const APP_TIME_ZONE = 'Asia/Karachi';
+
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const pad = (value) => String(value).padStart(2, '0');
+
+const keyFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: APP_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function zoneParts(date = new Date()) {
+  const parts = {};
+  for (const part of keyFormatter.formatToParts(date)) {
+    if (part.type !== 'literal') parts[part.type] = part.value;
+  }
+  return parts;
+}
+
+export function todayKey(date = new Date()) {
+  const parts = zoneParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+export function monthKey(date = new Date()) {
+  return todayKey(date).slice(0, 7);
+}
+
+export function addDaysKey(day, delta) {
+  const [year, month, date] = day.split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, date + delta));
+  return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`;
+}
+
+function parseDay(day) {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const [year, month, date] = day.split('-').map(Number);
+  if (month < 1 || month > 12 || date < 1 || date > 31) return null;
+  return { year, month, date };
+}
+
+export function dateLabel(day) {
+  const parsed = parseDay(day);
+  if (!parsed) return day || '';
+  return `${pad(parsed.date)} ${MONTHS[parsed.month - 1]} ${parsed.year}`;
+}
+
+export function shortDateLabel(day) {
+  const parsed = parseDay(day);
+  if (!parsed) return day || '';
+  return `${pad(parsed.date)} ${MONTHS[parsed.month - 1]}`;
+}
+
+export function weekdayLabel(day) {
+  const parsed = parseDay(day);
+  if (!parsed) return day || '';
+  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.date));
+  return WEEKDAYS[date.getUTCDay()];
+}
+
+export function monthLabel(month) {
+  if (typeof month !== 'string' || !/^\d{4}-\d{2}$/.test(month)) return month || '';
+  const [year, monthNumber] = month.split('-').map(Number);
+  return `${MONTHS[monthNumber - 1]} ${year}`;
+}
+
+export function clockLabel(date = new Date()) {
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: APP_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
+
+export function headerDateLabel(date = new Date()) {
+  return date.toLocaleDateString('en-GB', {
+    timeZone: APP_TIME_ZONE,
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+export function saleTimeLabel(time) {
+  if (!time) return '';
+  const [hourValue, minute] = time.split(':').map(Number);
+  const suffix = hourValue >= 12 ? 'PM' : 'AM';
+  const hour = hourValue % 12 === 0 ? 12 : hourValue % 12;
+  return `${hour}:${pad(minute)} ${suffix}`;
+}
+
 const numberFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
@@ -13,10 +128,18 @@ export function money(value) {
   return `Rs ${numberFormatter.format(Number.isFinite(number) ? number : 0)}`;
 }
 
+export function moneyPaisa(paisa) {
+  return money(Number(paisa || 0) / 100);
+}
+
 export function moneyWhole(value) {
   const number = Number(value);
   const rounded = Number.isFinite(number) ? Math.round(number) : 0;
   return `Rs ${new Intl.NumberFormat('en-US').format(rounded)}`;
+}
+
+export function moneyWholePaisa(paisa) {
+  return moneyWhole(Number(paisa || 0) / 100);
 }
 
 export function kg(value) {
@@ -24,87 +147,21 @@ export function kg(value) {
   return `${decimalFormatter.format(Number.isFinite(number) ? number : 0)} kg`;
 }
 
+export function rupeesToPaisa(value) {
+  const number = Number(String(value).replace(/,/g, ''));
+  return Number.isFinite(number) ? Math.round(number * 100) : NaN;
+}
+
+export function paisaToRupees(paisa) {
+  const number = Number(paisa);
+  return Number.isFinite(number) ? number / 100 : 0;
+}
+
 export function compactNumber(value) {
   const number = Number(value) || 0;
   if (number >= 1000000) return `${(number / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
   if (number >= 1000) return `${(number / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   return String(number);
-}
-
-export function pad(value) {
-  return String(value).padStart(2, '0');
-}
-
-export function todayKey(date = new Date()) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-export function monthKey(date = new Date()) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
-}
-
-export function addDaysKey(day, delta) {
-  const [year, month, date] = day.split('-').map(Number);
-  const next = new Date(year, month - 1, date + delta);
-  return todayKey(next);
-}
-
-export function dateLabel(day) {
-  if (!day) return '';
-  const date = new Date(`${day}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return day;
-  return date.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-export function shortDateLabel(day) {
-  if (!day) return '';
-  const date = new Date(`${day}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return day;
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-}
-
-export function weekdayLabel(day) {
-  if (!day) return '';
-  const date = new Date(`${day}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return day;
-  return date.toLocaleDateString('en-GB', { weekday: 'short' });
-}
-
-export function monthLabel(month) {
-  if (!month) return '';
-  const date = new Date(`${month}-01T00:00:00`);
-  if (Number.isNaN(date.getTime())) return month;
-  return date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-}
-
-export function clockLabel(date = new Date()) {
-  return date.toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  });
-}
-
-export function headerDateLabel(date = new Date()) {
-  return date.toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
-export function saleTimeLabel(time) {
-  if (!time) return '';
-  const [h, m] = time.split(':').map(Number);
-  const suffix = h >= 12 ? 'PM' : 'AM';
-  const hour = h % 12 === 0 ? 12 : h % 12;
-  return `${hour}:${pad(m)} ${suffix}`;
 }
 
 export function percentChange(current, previous) {
@@ -121,11 +178,16 @@ export function percentChange(current, previous) {
   };
 }
 
-export function describeWeight(weightKg) {
-  const grams = Math.round((Number(weightKg) || 0) * 1000);
+export function weightLabelFromMg(mg) {
+  const grams = Math.round(Number(mg) / 1000);
+  if (!Number.isFinite(grams) || grams <= 0) return '0 g';
   if (grams === 250) return '1 Pao';
   if (grams === 500) return 'Half KG';
-  if (grams > 0 && grams % 1000 === 0) return `${grams / 1000} KG`;
-  if (grams > 0 && grams < 1000) return `${grams} g`;
-  return kg(weightKg);
+  if (grams % 1000 === 0) return `${grams / 1000} KG`;
+  if (grams < 1000) return `${grams} g`;
+  return `${decimalFormatter.format(grams / 1000)} KG`;
+}
+
+export function describeWeight(weightKg) {
+  return weightLabelFromMg((Number(weightKg) || 0) * 1000000);
 }

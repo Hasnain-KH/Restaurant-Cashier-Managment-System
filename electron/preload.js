@@ -7,6 +7,7 @@ const bootstrap = ipcRenderer.sendSync('app:bootstrap') || {};
 contextBridge.exposeInMainWorld('joona', {
   bootstrap,
   info: () => ipcRenderer.invoke('app:info'),
+  verify: () => ipcRenderer.invoke('app:verify'),
   backup: () => ipcRenderer.invoke('backup:create'),
   restore: () => ipcRenderer.invoke('backup:restore'),
   openDataFolder: () => ipcRenderer.invoke('app:open-data-folder'),

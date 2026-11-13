@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { appInfo } from './api';
 import {
   BrandMark,
   CashierIcon,
@@ -16,11 +17,11 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 
 const NAV_ITEMS = [
-  { id: 'cashier', label: 'New Sale', icon: CashierIcon, caption: 'Record a sale' },
-  { id: 'dashboard', label: 'Owner Dashboard', icon: DashboardIcon, caption: 'Business overview' },
-  { id: 'history', label: 'Sales History', icon: HistoryIcon, caption: 'Find any sale' },
+  { id: 'cashier', label: 'New Sale', icon: CashierIcon, caption: 'Multi-item cashier' },
+  { id: 'dashboard', label: 'Owner Dashboard', icon: DashboardIcon, caption: 'Sales & profit' },
+  { id: 'history', label: 'Order History', icon: HistoryIcon, caption: 'Find any order' },
   { id: 'reports', label: 'Reports', icon: ReportsIcon, caption: 'Daily & monthly' },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon, caption: 'Backup & restore' },
+  { id: 'settings', label: 'Owner Settings', icon: SettingsIcon, caption: 'Prices & backups' },
 ];
 
 export default function App() {
@@ -30,6 +31,12 @@ export default function App() {
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    document.title = appInfo.practice
+      ? 'Joona Biryani — Practice Mode'
+      : 'Joona Biryani';
   }, []);
 
   useEffect(() => {
@@ -62,7 +69,7 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app ${appInfo.practice ? 'app-practice' : ''}`}>
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">
@@ -70,7 +77,9 @@ export default function App() {
           </span>
           <span className="brand-text">
             <span className="brand-name">JOONA BIRYANI</span>
-            <span className="brand-tagline">Sales &amp; Token Desk</span>
+            <span className="brand-tagline">
+              {appInfo.practice ? 'Practice Mode · Offline POS' : 'Sales, Profit & Orders'}
+            </span>
           </span>
         </div>
         <div className="topbar-right">
@@ -80,10 +89,20 @@ export default function App() {
           </span>
           <div className="topbar-clock">
             <span className="topbar-time mono">{clockLabel(clock)}</span>
-            <span className="topbar-date">{headerDateLabel(clock)}</span>
+            <span className="topbar-date">{headerDateLabel(clock)} · PKT</span>
           </div>
         </div>
       </header>
+
+      {appInfo.practice ? (
+        <div className="practice-banner" role="status">
+          <strong>PRACTICE MODE</strong>
+          <span>
+            You are using a separate practice profile and database. The real shop data is never
+            touched. Do not use practice orders for real customers.
+          </span>
+        </div>
+      ) : null}
 
       <div className="app-body">
         <aside className="sidebar">
@@ -112,12 +131,16 @@ export default function App() {
 
           <div className="sidebar-footer">
             <div className="sidebar-note">
-              <span className="sidebar-note-title">Local &amp; private</span>
+              <span className="sidebar-note-title">
+                {appInfo.practice ? 'Practice data only' : 'Local & private'}
+              </span>
               <span className="sidebar-note-text">
-                Every sale is saved on this laptop. No internet needed.
+                {appInfo.practice
+                  ? 'Separate profile and database. Production sales are not visible here.'
+                  : 'Every order is saved on this laptop with a verified backup after each sale. No internet needed.'}
               </span>
             </div>
-            <span className="sidebar-version">Joona Biryani · v1.0</span>
+            <span className="sidebar-version">Joona Biryani · v{appInfo.version}</span>
           </div>
         </aside>
 

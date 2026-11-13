@@ -75,7 +75,7 @@ test('validates amount, weight and request id', () => {
   );
   assert.throws(
     () => db.createSale({ amount: -50, weightKg: 1, requestId: 'req-invalid-02' }),
-    /amount greater than 0/i
+    /amount cannot be negative/i
   );
   assert.throws(
     () => db.createSale({ amount: 500, weightKg: 0, requestId: 'req-invalid-03' }),
@@ -221,7 +221,13 @@ test('creates a backup, restores it, and rejects invalid files', () => {
 
   const invalidPath = path.join(dir, 'not-a-database.sqlite');
   fs.writeFileSync(invalidPath, 'this is not a sqlite database');
-  assert.throws(() => db.validateBackupFile(invalidPath), /cannot be read|not a healthy/i);
+  const invalid = db.validateBackupFile(invalidPath);
+  assert.equal(invalid.valid, false);
+  assert.match(invalid.error, /cannot be read|not a healthy/i);
+
+  const missing = db.validateBackupFile(path.join(dir, 'missing.sqlite'));
+  assert.equal(missing.valid, false);
+  assert.match(missing.error, /not found/i);
 
   db.close();
 });
@@ -240,20 +246,33 @@ test('stores and updates settings', () => {
   db.close();
 });
 
-test('writes an automatic daily backup once per day', () => {
+test('refreshes the automatic daily backup after every new sale', () => {
   const { db, state } = setup();
+
+  // A sale refreshes today's backup automatically.
   db.createSale({ amount: 800, weightKg: 1, requestId: 'auto-00000001' });
-
   const first = db.autoBackup();
-  assert.equal(first.skipped, false);
+  assert.equal(first.skipped, true);
   assert.ok(fs.existsSync(first.path));
+  assert.equal(first.orders, 1);
 
+  // A second sale immediately refreshes the same file so it never lags behind.
+  db.createSale({ amount: 400, weightKg: 0.5, requestId: 'auto-00000002' });
   const second = db.autoBackup();
   assert.equal(second.skipped, true);
+  assert.equal(second.orders, 2);
 
+  const forced = db.autoBackup({ force: true });
+  assert.equal(forced.skipped, false);
+  assert.equal(forced.orders, 2);
+
+  // The next day starts a fresh file.
   state.now = new Date(2026, 10, 14, 10, 0, 0);
+  db.createSale({ amount: 300, weightKg: 1, requestId: 'auto-00000003' });
   const third = db.autoBackup();
-  assert.equal(third.skipped, false);
+  assert.equal(third.skipped, true);
+  assert.match(third.path, /auto-2026-11-14\.sqlite$/);
+  assert.equal(third.orders, 3);
 
   db.close();
 });

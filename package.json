@@ -1,7 +1,7 @@
 {
   "name": "joona-biryani",
   "productName": "Joona Biryani",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Offline sales management software for Joona Biryani",
   "main": "electron/main.js",
   "author": "Joona Biryani",
@@ -59,7 +59,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Joona Biryani"
+      "shortcutName": "Joona Biryani",
+      "artifactName": "Joona-Biryani-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Joona-Biryani-Portable-${version}.${ext}"
     }
   }
 }

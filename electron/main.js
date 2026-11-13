@@ -10,17 +10,25 @@ const {
   Menu,
   dialog,
   ipcMain,
+  session,
   shell,
 } = require('electron');
 
 const { createDatabase } = require('../server/db');
 const { createApp } = require('../server/app');
-const { dayKey } = require('../server/time');
+const { APP_TIME_ZONE, dayKey, fileStamp } = require('../server/time');
 
-app.setName('Joona Biryani');
+const isPractice =
+  process.argv.includes('--practice') || process.env.JOONA_PRACTICE === '1';
+const appDisplayName = isPractice ? 'Joona Biryani Practice' : 'Joona Biryani';
+app.setName(appDisplayName);
 
+// Practice mode must never share the real shop database. A separate Windows
+// profile is used so backups, settings and sales are completely isolated.
 if (process.env.JOONA_USER_DATA_DIR) {
   app.setPath('userData', process.env.JOONA_USER_DATA_DIR);
+} else if (isPractice) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'Joona Biryani Practice'));
 }
 
 const isDev = process.env.JOONA_DEV === '1';
@@ -31,7 +39,7 @@ let mainWindow = null;
 let httpServer = null;
 let database = null;
 let apiBase = '';
-const apiToken = crypto.randomBytes(24).toString('hex');
+const apiToken = crypto.randomBytes(32).toString('hex');
 
 const dataDir = path.join(app.getPath('userData'), 'data');
 const backupsDir = path.join(app.getPath('userData'), 'backups');
@@ -49,52 +57,81 @@ function listen(expressApp) {
   });
 }
 
-function fileStamp() {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${dayKey(now)}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+function isTrustedSender(event) {
+  if (!mainWindow || !event || !event.sender) return false;
+  if (event.sender !== mainWindow.webContents) return false;
+  const url = event.senderFrame ? event.senderFrame.url : event.sender.getURL();
+  if (!url) return false;
+  if (isDev) return url.startsWith('http://127.0.0.1:5173');
+  return url.startsWith('file://');
+}
+
+function requireTrusted(event) {
+  if (!isTrustedSender(event)) {
+    throw new Error('This action is only available from the Joona Biryani window.');
+  }
 }
 
 function registerIpc() {
   ipcMain.on('app:bootstrap', (event) => {
+    if (!isTrustedSender(event)) {
+      event.returnValue = null;
+      return;
+    }
     event.returnValue = {
       apiBase,
       apiToken,
       appVersion: app.getVersion(),
       packaged: app.isPackaged,
       platform: process.platform,
+      practice: isPractice,
+      appName: appDisplayName,
+      timezone: APP_TIME_ZONE,
     };
   });
 
-  ipcMain.handle('app:info', () => {
+  ipcMain.handle('app:info', (event) => {
+    requireTrusted(event);
     const storage = database.storageInfo();
     return {
       ...storage,
       appVersion: app.getVersion(),
+      appName: appDisplayName,
       dataDir,
       backupsDir,
       userData: app.getPath('userData'),
       packaged: app.isPackaged,
       apiBase,
+      practice: isPractice,
+      timezone: APP_TIME_ZONE,
+      today: dayKey(),
     };
   });
 
-  ipcMain.handle('app:open-data-folder', async () => {
+  ipcMain.handle('app:open-data-folder', async (event) => {
+    requireTrusted(event);
     const error = await shell.openPath(dataDir);
     return { ok: !error, error: error || null };
   });
 
-  ipcMain.handle('app:open-backups-folder', async () => {
+  ipcMain.handle('app:open-backups-folder', async (event) => {
+    requireTrusted(event);
     fs.mkdirSync(backupsDir, { recursive: true });
     const error = await shell.openPath(backupsDir);
     return { ok: !error, error: error || null };
   });
 
+  ipcMain.handle('app:verify', (event) => {
+    requireTrusted(event);
+    return database.verifyDatabase();
+  });
+
   ipcMain.handle('backup:create', async (event) => {
+    requireTrusted(event);
     const window = BrowserWindow.fromWebContents(event.sender) || mainWindow;
     const defaultPath = path.join(
       app.getPath('documents'),
-      `Joona-Biryani-Backup-${fileStamp()}.sqlite`
+      `Joona-Biryani${isPractice ? '-Practice' : ''}-Backup-${fileStamp()}.sqlite`
     );
 
     const { canceled, filePath } = await dialog.showSaveDialog(window, {
@@ -114,11 +151,12 @@ function registerIpc() {
       return { saved: true, ...result };
     } catch (error) {
       console.error('[joona] backup failed', error);
-      throw new Error('Could not create the backup file. Please choose another location.');
+      throw new Error(error.message || 'Could not create the backup file.');
     }
   });
 
   ipcMain.handle('backup:restore', async (event) => {
+    requireTrusted(event);
     const window = BrowserWindow.fromWebContents(event.sender) || mainWindow;
     const { canceled, filePaths } = await dialog.showOpenDialog(window, {
       title: 'Choose a Joona Biryani backup to restore',
@@ -139,12 +177,17 @@ function registerIpc() {
       return { error: error.message };
     }
 
+    if (!validation.valid) {
+      return { error: validation.error || 'This is not a valid Joona Biryani backup.' };
+    }
+
     const detailLines = [
-      `Sales in this backup: ${validation.sales}`,
+      `Sales in this backup: ${validation.orders}`,
       validation.firstDate ? `First sale: ${validation.firstDate}` : null,
       validation.lastDate ? `Last sale: ${validation.lastDate}` : null,
+      validation.isLegacySchema ? 'This is an older backup; it will be upgraded safely.' : null,
       '',
-      'Your current data will be saved as a safety backup before restoring.',
+      'Your current data will be saved as a verified safety backup before restoring.',
     ].filter(Boolean);
 
     const confirmation = await dialog.showMessageBox(window, {
@@ -170,6 +213,13 @@ function registerIpc() {
   });
 }
 
+function hardenSession(targetSession) {
+  targetSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(false);
+  });
+  targetSession.setPermissionCheckHandler(() => false);
+}
+
 function createWindow() {
   const windowOptions = {
     width: 1440,
@@ -178,13 +228,16 @@ function createWindow() {
     minHeight: 680,
     show: false,
     backgroundColor: '#faf5ec',
-    title: 'Joona Biryani',
+    title: isPractice ? 'Joona Biryani — Practice Mode' : 'Joona Biryani',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      nodeIntegrationInWorker: false,
       sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       spellcheck: false,
       devTools: !app.isPackaged || openDevTools,
     },
@@ -207,6 +260,10 @@ function createWindow() {
       ? url.startsWith('http://127.0.0.1:5173')
       : url.startsWith('file://');
     if (!allowed) event.preventDefault();
+  });
+
+  mainWindow.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault();
   });
 
   if (isDev) {
@@ -246,7 +303,7 @@ function runSmokeTest() {
 
   const timeout = setTimeout(() => {
     fail({ ok: false, error: 'timeout' });
-  }, 30000);
+  }, 45000);
 
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     clearTimeout(timeout);
@@ -268,7 +325,7 @@ function runSmokeTest() {
     try {
       const result = await mainWindow.webContents.executeJavaScript(
         `(async () => {
-          const waitFor = async (selector, attempts = 60) => {
+          const waitFor = async (selector, attempts = 80) => {
             for (let i = 0; i < attempts; i += 1) {
               const node = document.querySelector(selector);
               if (node) return node;
@@ -288,7 +345,8 @@ function runSmokeTest() {
             ok: Boolean(brand && nav && health.ok),
             brand: brand ? brand.textContent.trim() : null,
             navButtons: nav ? nav.querySelectorAll('button').length : 0,
-            cashierVisible: bodyText.includes('Save Sale'),
+            cashierVisible: bodyText.includes('Save') && bodyText.includes('Sale'),
+            practice: boot.practice,
             health,
             apiBase: boot.apiBase,
             title: document.title,
@@ -312,6 +370,8 @@ async function start() {
     fs.mkdirSync(dataDir, { recursive: true });
     fs.mkdirSync(backupsDir, { recursive: true });
 
+    hardenSession(session.defaultSession);
+
     database = createDatabase(dbPath, { backupsDir });
 
     try {
@@ -321,11 +381,16 @@ async function start() {
       console.warn('[joona] daily backup skipped:', error.message);
     }
 
-    const expressApp = createApp({ db: database, token: apiToken });
+    const expressApp = createApp({
+      db: database,
+      token: apiToken,
+      practice: isPractice,
+      version: app.getVersion(),
+    });
     const started = await listen(expressApp);
     httpServer = started.server;
     apiBase = `http://127.0.0.1:${started.port}`;
-    console.log(`[joona] local API ready on ${apiBase}`);
+    console.log(`[joona] ${isPractice ? 'PRACTICE ' : ''}local API ready on ${apiBase}`);
     console.log(`[joona] database: ${dbPath}`);
 
     registerIpc();
